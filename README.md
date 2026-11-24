@@ -2,7 +2,7 @@
 
 펌웨어가 실행 중 로드한 Rust 플러그인에 function table을 전달할 때, **Rust 함수 포인터 타입으로 borrow, lifetime, 소유권 이전 계약을 표현할 수 있다.** 양쪽이 같은 공유 crate를 사용하면 각 컴파일러가 그 계약을 검사한다. API마다 C wrapper를 만들 필요는 없다.
 
-이 프로젝트는 `no_std` API와 플러그인, 호스트에서 실행하는 펌웨어 시뮬레이터로 그 동작을 재현한다. `.rmeta`만 읽어 플러그인을 별도로 컴파일하고, 잘못된 lifetime과 move를 컴파일러가 거부하는지도 확인한다.
+이 프로젝트는 `no_std` API와 플러그인, 호스트에서 실행하는 펌웨어 시뮬레이터로 그 동작을 재현한다. 공유 `fw-api`에는 타입과 함수 포인터 계약만 두고, 처리 함수와 상태는 `firmware-services`에 둔다. 플러그인은 `firmware-services`에 의존하지 않는다.
 
 **실제 ELF 로더는 포함하지 않는다.** 호스트 시뮬레이터는 별도 crate들을 정적으로 링크한다. `.rmeta`를 사용하는 별도 빌드는 object 파일까지 생성하며, 런타임 relocation과 entrypoint 주소 변환은 수행하지 않는다.
 
@@ -19,13 +19,21 @@ cargo run --locked --offline -p firmware-sim
 정상 출력:
 
 ```text
+PluginReport { length: 16, first_byte: 7, receipt: 1 }
+PluginReport { length: 16, first_byte: 7, receipt: 2 }
 PASS: firmware -> plugin -> firmware ownership transfer
 PASS: borrowed slice returned through a Rust function pointer
-PluginReport { length: 16, first_byte: 7, receipt: 1 }
+PASS: both invocations use the same firmware service state
 Scope: host simulation; the plugin is statically linked.
 ```
 
-전체 검증:
+Cargo로 서비스 상태 검사와 네 가지 compile-fail doctest를 실행한다.
+
+```bash
+cargo test --workspace --locked --offline
+```
+
+`.rmeta` 단독 컴파일과 오류 코드까지 확인하는 추가 검증:
 
 ```bash
 python3 scripts/verify.py
@@ -42,8 +50,9 @@ Linux에서 확인한 호스트 실행과 ELF object 생성 결과는 [검증 �
 | 경로 | 역할 |
 | --- | --- |
 | [crates/fw-api](crates/fw-api/src/lib.rs) | `Buffer`, `FirmwareApi`, `PluginEntry` 등 양쪽이 공유하는 계약 |
+| [crates/firmware-services](crates/firmware-services/src/lib.rs) | 펌웨어만 링크하는 처리 함수·카운터·checksum 상태 |
 | [crates/plugin](crates/plugin/src/lib.rs) | 전달받은 테이블로 펌웨어 함수를 호출하는 `no_std` 코드 |
-| [crates/firmware-sim](crates/firmware-sim/src/main.rs) | 서비스 구현과 상태를 소유하는 호스트 시뮬레이터 |
+| [crates/firmware-sim](crates/firmware-sim/src/main.rs) | 펌웨어 서비스를 연결하고 같은 플러그인을 두 번 호출하는 호스트 시뮬레이터 |
 | [scripts/build_sdk.py](scripts/build_sdk.py) | `.rmeta`, `.rlib`, 플러그인 object, 빌드 manifest 생성 |
 | [tests/compile-fail](tests/compile-fail) | lifetime·move·제공자 함수 타입 위반 예제 |
 | [DESIGN.md](DESIGN.md) | 컴파일과 런타임의 역할, 실제 펌웨어에 적용할 때의 설계 범위 |
@@ -86,6 +95,8 @@ let receipt = (api.submit)(buffer); // 플러그인 → 펌웨어: 소유권 이
 ```
 
 `Buffer`는 `Copy`가 아니다. 따라서 `submit` 이후 `buffer`를 다시 사용할 수 없다. `submit` 뒤에서 `data`를 사용하려고 해도, 살아 있는 borrow와 move가 충돌하므로 컴파일 오류다.
+
+실제 `new_buffer_impl`, `bytes_impl`, `submit_impl`과 생성·제출 카운터는 `firmware-services`에만 있다. 두 번 호출한 플러그인이 받은 receipt가 1, 2로 증가하는 것은 같은 펌웨어 상태를 사용하기 때문이다. 공유 API에는 `impl`, `Drop`, `derive`로 생성한 구현이나 `static` 상태가 없다. 작은 호출 코드나 `core` 코드까지 두 바이너리 사이에서 자동으로 공유한다는 의미는 아니다.
 
 | 잘못된 코드 | 거부되는 이유 |
 | --- | --- |

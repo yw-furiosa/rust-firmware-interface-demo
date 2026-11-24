@@ -6,4 +6,5 @@ publish.workspace = true
 
 [dependencies]
 fw-api = { path = "../fw-api" }
+firmware-services = { path = "../firmware-services" }
 plugin = { path = "../plugin" }

@@ -3,9 +3,17 @@
 version = 4
 
 [[package]]
+name = "firmware-services"
+version = "0.1.0"
+dependencies = [
+ "fw-api",
+]
+
+[[package]]
 name = "firmware-sim"
 version = "0.1.0"
 dependencies = [
+ "firmware-services",
  "fw-api",
  "plugin",
 ]

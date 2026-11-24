@@ -1,0 +1,8 @@
+[package]
+name = "firmware-services"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+fw-api = { path = "../fw-api" }
