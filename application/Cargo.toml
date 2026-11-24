@@ -1,0 +1,22 @@
+[package]
+name = "firmware-app"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+# An independent Cargo root: this directory can be copied to another repository.
+[workspace]
+resolver = "3"
+
+[dependencies.fw-api]
+git = "https://github.com/yw-furiosa/rust-firmware-interface-demo.git"
+rev = "8276cfb5b544997b1bdf6d9e390f3bfbd84fc8d8"
+default-features = false
+
+[profile.dev]
+panic = "abort"
+codegen-units = 1
+
+[profile.release]
+panic = "abort"
+codegen-units = 1

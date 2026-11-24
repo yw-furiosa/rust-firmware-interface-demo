@@ -1,5 +1,6 @@
 [workspace]
 members = ["crates/fw-api", "crates/firmware-services", "crates/plugin", "crates/firmware-sim"]
+exclude = ["application"]
 resolver = "3"
 
 [workspace.package]

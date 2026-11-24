@@ -1,5 +1,8 @@
 #![no_std]
 
+//! Application logic; the only dependency is the shared API contract.
+//! Firmware service implementations are reached through the supplied table.
+
 use fw_api::{FirmwareApi, PluginEntry, PluginReport};
 
 // SAFETY: This example reserves the symbol `plugin_entry` for this function.

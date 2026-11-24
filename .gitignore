@@ -1,4 +1,5 @@
 /target/
+/application/target/
 /artifacts/
 __pycache__/
 *.pyc

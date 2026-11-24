@@ -38,7 +38,7 @@ def build_sdk(runner, target=None, relocation_model=None):
     )
     runner.run(
         "plugin-from-rmeta",
-        ["rustc", "crates/plugin/src/lib.rs", "--crate-name=plugin", "--crate-type=rlib"]
+        ["rustc", "application/src/lib.rs", "--crate-name=plugin", "--crate-type=rlib"]
         + flags
         + [
             "--extern", f"fw_api={relative(metadata)}",

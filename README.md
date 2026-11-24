@@ -4,13 +4,13 @@
 
 이 프로젝트는 `no_std` API와 플러그인, 호스트에서 실행하는 펌웨어 시뮬레이터로 그 동작을 재현한다. 공유 `fw-api`에는 타입과 함수 포인터 계약만 두고, 처리 함수와 상태는 `firmware-services`에 둔다. 플러그인은 `firmware-services`에 의존하지 않는다.
 
-**실제 ELF 로더는 포함하지 않는다.** 호스트 시뮬레이터는 별도 crate들을 정적으로 링크한다. `.rmeta`를 사용하는 별도 빌드는 object 파일까지 생성하며, 런타임 relocation과 entrypoint 주소 변환은 수행하지 않는다.
+**실제 ELF 로더는 포함하지 않는다.** 호스트 시뮬레이터는 application의 같은 소스를 정적으로 링크한다. 독립 application 빌드는 ELF object까지 생성하며, 런타임 relocation과 entrypoint 주소 변환은 수행하지 않는다.
 
 ## 실행하기
 
-이 문서는 **x86_64 Linux 개발 환경**을 기준으로 한다. 기본 실험 타깃은 `x86_64-unknown-linux-gnu`다. Rustup, 호스트용 C toolchain과 링커(`cc`), Python 3.9 이상, object 확인용 binutils(`readelf`, `nm`)가 필요하다.
+이 문서는 **x86_64 Linux 개발 환경**을 기준으로 한다. 기본 실험 타깃은 `x86_64-unknown-linux-gnu`다. Rustup, 호스트용 C toolchain과 링커(`cc`), object 확인용 binutils(`readelf`, `nm`)가 필요하다. 빌드와 실행·테스트는 Cargo만 사용하며, 추가 메타데이터 실험 스크립트를 실행할 때만 Python 3.9 이상이 필요하다.
 
-`rust-toolchain.toml`이 Rust 1.94.1을 지정하며, 해당 toolchain이 없으면 Rustup이 처음 실행할 때 내려받는다. 외부 Cargo 의존성은 없다.
+`rust-toolchain.toml`이 Rust 1.94.1을 지정하며, 해당 toolchain이 없으면 Rustup이 처음 실행할 때 내려받는다. 루트 시뮬레이터는 로컬 crate만 사용한다. 독립 application은 공유 API를 Git에서 가져오며, crates.io 의존성은 없다.
 
 ```bash
 cargo run --locked --offline -p firmware-sim
@@ -51,11 +51,45 @@ Linux에서 확인한 호스트 실행과 ELF object 생성 결과는 [검증 �
 | --- | --- |
 | [crates/fw-api](crates/fw-api/src/lib.rs) | `Buffer`, `FirmwareApi`, `PluginEntry` 등 양쪽이 공유하는 계약 |
 | [crates/firmware-services](crates/firmware-services/src/lib.rs) | 펌웨어만 링크하는 처리 함수·카운터·checksum 상태 |
-| [crates/plugin](crates/plugin/src/lib.rs) | 전달받은 테이블로 펌웨어 함수를 호출하는 `no_std` 코드 |
+| [application](application/README.md) | Git 의존성으로 API를 가져오는 독립 Cargo 프로젝트 |
+| [crates/plugin](crates/plugin/Cargo.toml) | 같은 application 소스를 호스트 시뮬레이터에서 사용하는 adapter |
 | [crates/firmware-sim](crates/firmware-sim/src/main.rs) | 펌웨어 서비스를 연결하고 같은 플러그인을 두 번 호출하는 호스트 시뮬레이터 |
 | [scripts/build_sdk.py](scripts/build_sdk.py) | `.rmeta`, `.rlib`, 플러그인 object, 빌드 manifest 생성 |
 | [tests/compile-fail](tests/compile-fail) | lifetime·move·제공자 함수 타입 위반 예제 |
 | [DESIGN.md](DESIGN.md) | 컴파일과 런타임의 역할, 실제 펌웨어에 적용할 때의 설계 범위 |
+
+## 별도 application repository를 Cargo로 빌드하기
+
+`application/`은 루트 workspace에서 제외한 독립 Cargo 프로젝트다. 예제를 한 저장소에서 배포하기 위해 같은 디렉터리에 두었지만, application은 상대 경로가 아닌 Git 의존성으로 API를 가져온다. 이 디렉터리를 다른 repository로 옮겨도 빌드할 수 있다.
+
+```toml
+[dependencies.fw-api]
+git = "https://github.com/yw-furiosa/rust-firmware-interface-demo.git"
+rev = "8276cfb5b544997b1bdf6d9e390f3bfbd84fc8d8"
+default-features = false
+```
+
+`application/` 디렉터리에서 실행한다. 처음에는 Git 의존성을 내려받으므로 네트워크 연결이 필요하다.
+
+```bash
+cargo build --locked --target x86_64-unknown-linux-gnu
+cargo elf-object
+cargo tree --locked
+```
+
+`cargo elf-object`는 `cargo rustc --lib --locked --target x86_64-unknown-linux-gnu -- --emit=obj`의 alias다. Cargo가 `fw-api`를 빌드하고 메타데이터를 application 컴파일에 연결한다. `.rmeta` 경로 지정이나 Python·`build.rs`는 필요하지 않다.
+
+```text
+firmware-sim ── firmware-services ── fw-api (local source)
+             └─ plugin adapter ──── fw-api (same local source)
+                  └─ application/src/lib.rs
+
+standalone application ── fw-api (Git revision pinned in Cargo.toml)
+```
+
+Application의 의존성 트리에는 `firmware-services`가 없다. 펌웨어가 전달한 function table을 통해 서비스 구현을 호출하므로 application에 그 구현과 상태를 링크할 필요가 없다. API를 변경할 때는 application의 Git revision과 lockfile도 명시적으로 갱신해야 한다. 현재 고정한 revision의 API 소스는 로컬 `crates/fw-api/src/lib.rs`와 같다.
+
+Cargo의 Git 의존성은 API 소스를 다시 빌드한다. 펌웨어 빌드에서 나온 동일한 `.rmeta` artifact를 다운로드하는 방식이 아니며, 두 바이너리의 ABI 호환성은 toolchain·target·features·의존성·SDK 정책으로 관리한다.
 
 ## function table에 lifetime을 표현하기
 
@@ -105,7 +139,9 @@ let receipt = (api.submit)(buffer); // 플러그인 → 펌웨어: 소유권 이
 | `submit(buffer)` 뒤에서 기존 `data` 사용 | borrow가 살아 있는 동안 move; E0505 |
 | `'static` 입력만 받는 함수를 `bytes`에 대입 | 임의의 `'a`를 받는 계약을 만족하지 않음; E0308 |
 
-## `.rmeta`를 만들고 공유하기
+## 추가 실험: `.rmeta`만 전달하기
+
+일반 application 빌드는 위 Cargo 명령으로 충분하다. 아래 스크립트와 직접 `rustc`를 호출하는 예제는 메타데이터만 전달해도 타입 검사가 동작한다는 것을 따로 확인하기 위한 추가 실험이다. 명령은 repository 루트에서 실행한다.
 
 x86_64 Linux용 SDK와 object를 생성하려면:
 
@@ -133,7 +169,7 @@ rustc crates/fw-api/src/lib.rs \
   -C panic=abort \
   --emit=metadata=artifacts/manual/libfw_api.rmeta,link=artifacts/manual/libfw_api.rlib
 
-rustc crates/plugin/src/lib.rs \
+rustc application/src/lib.rs \
   --edition=2024 --crate-name=plugin --crate-type=rlib \
   --target=x86_64-unknown-linux-gnu \
   -C panic=abort -C codegen-units=1 \
@@ -150,16 +186,19 @@ SDK는 코드 생성에 필요한 정보를 포함하도록 실제 빌드에서 
 
 ## 펌웨어 타깃 object 생성
 
-x86_64 Linux에서 먼저 기본 실험용 ELF object를 만들고 헤더와 relocation을 확인한다.
+x86_64 Linux에서 `application/` 디렉터리로 이동한 뒤 ELF object를 만들고 헤더와 relocation을 확인한다.
 
 ```bash
-python3 scripts/build_sdk.py --target x86_64-unknown-linux-gnu
-readelf -h artifacts/sdk/x86_64-unknown-linux-gnu/plugin.o
-readelf -r artifacts/sdk/x86_64-unknown-linux-gnu/plugin.o
-nm -u artifacts/sdk/x86_64-unknown-linux-gnu/plugin.o
+cargo elf-object
+readelf -h target/x86_64-unknown-linux-gnu/debug/deps/firmware_app-*.o
+readelf -r target/x86_64-unknown-linux-gnu/debug/deps/firmware_app-*.o
+nm -C --defined-only target/x86_64-unknown-linux-gnu/debug/deps/firmware_app-*.o
+nm -u target/x86_64-unknown-linux-gnu/debug/deps/firmware_app-*.o
 ```
 
-헤더의 `Class`는 `ELF64`, `Type`은 `REL (Relocatable file)`, `Machine`은 `Advanced Micro Devices X86-64`다. `plugin.o`는 최종 실행 파일이 아니라 relocation이 남아 있는 ET_REL object다. `nm -u`는 최종 링크 또는 로더에서 해결해야 할 외부 심볼을 보여준다.
+헤더의 `Class`는 `ELF64`, `Type`은 `REL (Relocatable file)`, `Machine`은 `Advanced Micro Devices X86-64`다. 생성된 `.o`는 최종 실행 파일이 아니라 relocation이 남아 있는 ET_REL object다. `nm -u`는 최종 링크 또는 로더에서 해결해야 할 외부 심볼을 보여준다.
+
+`nm --defined-only`에서는 `plugin_entry`를 확인할 수 있고, `firmware_services::submit_impl`이나 펌웨어 카운터는 나타나지 않는다. Repository 루트에서 빌드한 `target/debug/firmware-sim`에 같은 `nm` 명령을 적용하면 서비스 함수와 상태를 확인할 수 있다. 작은 wrapper, compiler 지원 함수, generic 코드의 중복까지 제거한다는 보장은 아니다.
 
 **빌드를 실행하는 Linux 호스트와 실제 펌웨어 타깃은 별개다.** `x86_64-unknown-linux-gnu`는 이 예제의 Linux 실험용 타깃이며, bare-metal 펌웨어에 그대로 적용할 타깃을 의미하지 않는다. 실제 펌웨어가 다른 Rust target이나 custom target을 사용한다면 API와 플러그인도 그 target과 설정에 맞춰 빌드해야 한다.
 
@@ -167,12 +206,12 @@ nm -u artifacts/sdk/x86_64-unknown-linux-gnu/plugin.o
 
 ```bash
 rustup target add --toolchain 1.94.1 riscv64imac-unknown-none-elf
-python3 scripts/build_sdk.py --target riscv64imac-unknown-none-elf
+cargo rustc --lib --locked --target riscv64imac-unknown-none-elf -- --emit=obj
 ```
 
-이 결과는 `artifacts/sdk/riscv64imac-unknown-none-elf/plugin.o`에 생성된다. 실제 보드에서 실행하려면 펌웨어에 맞는 최종 링크와 로더가 추가로 필요하다.
+이 결과는 `target/riscv64imac-unknown-none-elf/debug/deps/firmware_app-*.o`에 생성된다. 실제 보드에서 실행하려면 펌웨어에 맞는 최종 링크와 로더가 추가로 필요하다.
 
-`--relocation-model static` 또는 `--relocation-model pic`도 선택할 수 있다. 어떤 모델이 적합한지는 타깃과 로더가 처리할 relocation에 따라 결정한다. function table은 펌웨어 서비스 주소를 전달할 뿐, ELF 내부 relocation이나 `core` 등에서 생기는 추가 심볼 의존성을 자동으로 해결하지 않는다.
+필요하면 `cargo rustc`의 `--` 뒤에 `-C relocation-model=static` 또는 `-C relocation-model=pic`를 추가할 수 있다. 어떤 모델이 적합한지는 타깃과 로더가 처리할 relocation에 따라 결정한다. function table은 펌웨어 서비스 주소를 전달할 뿐, ELF 내부 relocation이나 `core` 등에서 생기는 추가 심볼 의존성을 자동으로 해결하지 않는다.
 
 ## 적용 조건과 확인한 범위
 

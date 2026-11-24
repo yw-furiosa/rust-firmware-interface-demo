@@ -4,5 +4,9 @@ version.workspace = true
 edition.workspace = true
 publish.workspace = true
 
+[lib]
+# Reuse the standalone application's exact source in the host simulation.
+path = "../../application/src/lib.rs"
+
 [dependencies]
 fw-api = { path = "../fw-api" }
