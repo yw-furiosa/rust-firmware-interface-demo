@@ -8,7 +8,9 @@
 
 ## 실행하기
 
-Rustup과 호스트용 Rust 링커가 필요하다. 검증 스크립트에는 Python 3.9 이상도 필요하다. `rust-toolchain.toml`이 Rust 1.94.1을 지정하며, 해당 toolchain이 없으면 Rustup이 처음 실행할 때 내려받는다. 외부 Cargo 의존성은 없다.
+이 문서는 **x86_64 Linux 개발 환경**을 기준으로 한다. 기본 실험 타깃은 `x86_64-unknown-linux-gnu`다. Rustup, 호스트용 C toolchain과 링커(`cc`), Python 3.9 이상, object 확인용 binutils(`readelf`, `nm`)가 필요하다.
+
+`rust-toolchain.toml`이 Rust 1.94.1을 지정하며, 해당 toolchain이 없으면 Rustup이 처음 실행할 때 내려받는다. 외부 Cargo 의존성은 없다.
 
 ```bash
 cargo run --locked --offline -p firmware-sim
@@ -33,7 +35,7 @@ python3 scripts/verify.py
 
 전체 명령·종료 코드·로그 경로는 `artifacts/verification.json`에, 실행별 stdout/stderr는 `artifacts/logs/`에 저장된다.
 
-제작 시 확인한 호스트 실행과 RISC-V ELF object 생성 결과는 [검증 기록](VALIDATION.md)에 정리했다.
+Linux에서 확인한 호스트 실행과 ELF object 생성 결과는 [검증 기록](VALIDATION.md)에 정리했다.
 
 ## 프로젝트 구성
 
@@ -94,13 +96,13 @@ let receipt = (api.submit)(buffer); // 플러그인 → 펌웨어: 소유권 이
 
 ## `.rmeta`를 만들고 공유하기
 
-현재 호스트용 SDK와 object를 생성하려면:
+x86_64 Linux용 SDK와 object를 생성하려면:
 
 ```bash
-python3 scripts/build_sdk.py
+python3 scripts/build_sdk.py --target x86_64-unknown-linux-gnu
 ```
 
-결과는 `artifacts/sdk/<target>/`에 저장된다.
+결과는 `artifacts/sdk/x86_64-unknown-linux-gnu/`에 저장된다. 다른 타깃을 지정하면 해당 target 이름의 디렉터리를 사용한다.
 
 | 산출물 | 용도 |
 | --- | --- |
@@ -109,18 +111,20 @@ python3 scripts/build_sdk.py
 | `plugin.o` | `.rmeta`로 타입을 검사한 뒤 생성한 플러그인 object |
 | `manifest.json` | toolchain, target, 옵션, 산출물 해시를 기록한 빌드 정보 |
 
-메타데이터를 만드는 핵심 옵션은 `--emit=metadata`다. 다음은 호스트용 최소 명령이다.
+메타데이터를 만드는 핵심 옵션은 `--emit=metadata`다. 다음은 같은 x86_64 Linux 타깃을 명시한 최소 명령이다.
 
 ```bash
 mkdir -p artifacts/manual
 
 rustc crates/fw-api/src/lib.rs \
   --edition=2024 --crate-name=fw_api --crate-type=rlib \
+  --target=x86_64-unknown-linux-gnu \
   -C panic=abort \
   --emit=metadata=artifacts/manual/libfw_api.rmeta,link=artifacts/manual/libfw_api.rlib
 
 rustc crates/plugin/src/lib.rs \
   --edition=2024 --crate-name=plugin --crate-type=rlib \
+  --target=x86_64-unknown-linux-gnu \
   -C panic=abort -C codegen-units=1 \
   --extern fw_api=artifacts/manual/libfw_api.rmeta \
   -L dependency=artifacts/manual \
@@ -135,14 +139,27 @@ SDK는 코드 생성에 필요한 정보를 포함하도록 실제 빌드에서 
 
 ## 펌웨어 타깃 object 생성
 
-타깃이 정해지면 해당 Rust target을 설치하고 지정한다. 예를 들어 다음은 **타깃 지정 방법을 보여주기 위한** RISC-V 명령이다. 프로젝트의 기본 검증은 호스트에서 수행한다.
+x86_64 Linux에서 먼저 기본 실험용 ELF object를 만들고 헤더와 relocation을 확인한다.
+
+```bash
+python3 scripts/build_sdk.py --target x86_64-unknown-linux-gnu
+readelf -h artifacts/sdk/x86_64-unknown-linux-gnu/plugin.o
+readelf -r artifacts/sdk/x86_64-unknown-linux-gnu/plugin.o
+nm -u artifacts/sdk/x86_64-unknown-linux-gnu/plugin.o
+```
+
+헤더의 `Class`는 `ELF64`, `Type`은 `REL (Relocatable file)`, `Machine`은 `Advanced Micro Devices X86-64`다. `plugin.o`는 최종 실행 파일이 아니라 relocation이 남아 있는 ET_REL object다. `nm -u`는 최종 링크 또는 로더에서 해결해야 할 외부 심볼을 보여준다.
+
+**빌드를 실행하는 Linux 호스트와 실제 펌웨어 타깃은 별개다.** `x86_64-unknown-linux-gnu`는 이 예제의 Linux 실험용 타깃이며, bare-metal 펌웨어에 그대로 적용할 타깃을 의미하지 않는다. 실제 펌웨어가 다른 Rust target이나 custom target을 사용한다면 API와 플러그인도 그 target과 설정에 맞춰 빌드해야 한다.
+
+예를 들어 Linux 호스트에서 RISC-V 펌웨어용 object를 cross-compile하려면:
 
 ```bash
 rustup target add --toolchain 1.94.1 riscv64imac-unknown-none-elf
 python3 scripts/build_sdk.py --target riscv64imac-unknown-none-elf
 ```
 
-ELF 타깃이면 `plugin.o`는 ELF relocatable object다. macOS 호스트 기본 빌드는 Mach-O object다. 스크립트가 파일 형식을 출력하므로 두 결과를 혼동하지 않아도 된다.
+이 결과는 `artifacts/sdk/riscv64imac-unknown-none-elf/plugin.o`에 생성된다. 실제 보드에서 실행하려면 펌웨어에 맞는 최종 링크와 로더가 추가로 필요하다.
 
 `--relocation-model static` 또는 `--relocation-model pic`도 선택할 수 있다. 어떤 모델이 적합한지는 타깃과 로더가 처리할 relocation에 따라 결정한다. function table은 펌웨어 서비스 주소를 전달할 뿐, ELF 내부 relocation이나 `core` 등에서 생기는 추가 심볼 의존성을 자동으로 해결하지 않는다.
 

@@ -38,7 +38,9 @@ Function table은 임의의 type-generic 함수를 그대로 담는 수단은 �
 
 `#[unsafe(no_mangle)]`은 entrypoint의 심볼 이름을 고정한다. Rust ABI를 C ABI로 바꾸지는 않는다. ELF의 시작 주소에 무조건 점프하는 것과 `PluginEntry` 규약으로 호출하는 것도 같지 않다. 스택과 인자·반환값 전달은 해당 타깃의 호출 규약을 따라야 한다.
 
-ELF 종류는 타깃과 로더 요구에 맞춰 선택한다. 이 예제가 생성하는 object는 ELF 타깃에서 ET_REL이다. ET_REL을 직접 로드하려면 object의 relocation을 처리해야 한다. ET_EXEC 또는 ET_DYN으로 링크해서 로드하려면 별도 linker script·링크 옵션과 그 파일 형식을 처리하는 로더가 필요하다. 이 프로젝트는 어느 방식의 로더도 구현하지 않는다.
+ELF 종류는 타깃과 로더 요구에 맞춰 선택한다. 기본 안내는 x86_64 Linux 호스트와 `x86_64-unknown-linux-gnu` 실험용 타깃을 사용한다. 실제 펌웨어가 bare-metal target을 사용한다면 Linux 호스트에서 그 target으로 cross-compile해야 한다.
+
+이 예제가 생성하는 object는 ELF 타깃에서 ET_REL이다. ET_REL을 직접 로드하려면 object의 relocation을 처리해야 한다. ET_EXEC 또는 ET_DYN으로 링크해서 로드하려면 별도 linker script·링크 옵션과 그 파일 형식을 처리하는 로더가 필요하다. 이 프로젝트는 어느 방식의 로더도 구현하지 않는다.
 
 Function table을 사용해도 플러그인 내부 relocation, `core`의 코드, panic 처리 또는 compiler builtins 의존성이 남을 수 있다. 최종 바이너리에서 어떤 코드를 자체 포함하고 어떤 코드를 펌웨어가 제공할지 정해야 한다. Cargo의 일반 `bin`/`cdylib` 빌드로 출력 형식만 바꾸는 것은 이 설계를 대신하지 않는다.
 
